@@ -7,7 +7,8 @@ var SHEETS = {
   PARTS_MASTER: 'Spare_Parts_Master',
   SCHEDULE:     'Spare_Parts_Schedule',
   LOG:          'Maintenance_Log',
-  DEFECT_LOG:   'Defect_Log'
+  DEFECT_LOG:   'Defect_Log',
+  AUDIT_LOG:    'Audit_Log'
 };
 
 var COL = {
@@ -25,7 +26,9 @@ var COL = {
   },
   DEFECT: {
     ID: 0, TIMESTAMP: 1, MACHINE_ID: 2, DATE_FOUND: 3,
-    SYMPTOM: 4, SEVERITY: 5, REPORTED_BY: 6, STATUS: 7
+    SYMPTOM: 4, SEVERITY: 5, REPORTED_BY: 6, STATUS: 7,
+    ROOT_CAUSE: 8, CORRECTIVE_ACTION: 9, RESOLVED_BY: 10,
+    RESOLVED_AT: 11, LINKED_MAINTENANCE_ID: 12
   }
 };
 
@@ -73,8 +76,13 @@ function _formatDateTime(date) {
 }
 
 function _addYears(dateStr, years) {
-  var d = new Date(dateStr);
-  d.setDate(d.getDate() + Math.round(parseFloat(years) * 365));
+  var d = new Date(dateStr + 'T00:00:00');
+  var y = parseFloat(years);
+  if (isNaN(d.getTime()) || isNaN(y)) return '';
+  var wholeYears = Math.trunc(y);
+  var fractional = y - wholeYears;
+  d.setFullYear(d.getFullYear() + wholeYears);
+  if (fractional !== 0) d.setMonth(d.getMonth() + Math.round(fractional * 12));
   return _formatDate(d);
 }
 
@@ -91,6 +99,69 @@ function _scheduleStatus(days) {
   return 'OK';
 }
 
+function _required(value, label) {
+  if (value == null || String(value).trim() === '') throw new Error(label + ' is required.');
+  return String(value).trim();
+}
+
+function _isAllowed(value, allowedValues) {
+  return allowedValues.indexOf(String(value)) !== -1;
+}
+
+function _validateDateString(dateStr) {
+  var v = String(dateStr || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  var d = new Date(v + 'T00:00:00');
+  return !isNaN(d.getTime()) && _formatDate(d) === v;
+}
+
+function _machineExists(machineId) {
+  var mId = String(machineId).trim();
+  return _getSheetData(SHEETS.MACHINE_LIST).some(function(r){ return String(r[COL.MACHINE.ID]).trim() === mId; });
+}
+
+function _partExists(partId) {
+  var pId = String(partId).trim();
+  var rows = _getSheetData(SHEETS.PARTS_MASTER);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][COL.PARTS_MASTER.ID]).trim() === pId) return rows[i];
+  }
+  return null;
+}
+
+function _getDefectById(defectId) {
+  var dId = String(defectId).trim();
+  var rows = _getSheetData(SHEETS.DEFECT_LOG);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][COL.DEFECT.ID]).trim() === dId) return rows[i];
+  }
+  return null;
+}
+
+function _getDefectMetaColumnsOrThrow() {
+  var headers = _getSheet(SHEETS.DEFECT_LOG).getRange(1, 1, 1, _getSheet(SHEETS.DEFECT_LOG).getLastColumn()).getValues()[0].map(function(h){return String(h).trim();});
+  var required = ['root_cause','corrective_action','resolved_by','resolved_at','linked_maintenance_id'];
+  var idx = {};
+  required.forEach(function(name){
+    var i = headers.indexOf(name);
+    if (i === -1) throw new Error('Missing required Defect_Log column: ' + name);
+    idx[name]=i+1;
+  });
+  return idx;
+}
+
+function _appendAuditRow(action, entityType, entityId, oldValue, newValue) {
+  var sheet = _getSheet(SHEETS.AUDIT_LOG);
+  var email = '';
+  try { email = Session.getActiveUser().getEmail() || 'unknown'; } catch (e) { email = 'unknown'; }
+  sheet.appendRow([_formatDateTime(new Date()), email, action, entityType, entityId, oldValue || '', newValue || '']);
+}
+
+function _logAudit(action, entityType, entityId, oldValue, newValue) {
+  try { _appendAuditRow(action, entityType, entityId, JSON.stringify(oldValue || {}), JSON.stringify(newValue || {})); }
+  catch (e) { throw new Error('Audit_Log write failed: ' + e.message); }
+}
+
 // Upsert Spare_Parts_Schedule by composite key [Machine_ID, Part_ID].
 function _upsertSchedule(machineId, partId, lastChanged, nextDueDate, status) {
   var sheet    = _getSheet(SHEETS.SCHEDULE);
@@ -102,19 +173,27 @@ function _upsertSchedule(machineId, partId, lastChanged, nextDueDate, status) {
       foundIdx = i; break;
     }
   }
+  var oldState = null;
   if (foundIdx !== -1) {
     var row = foundIdx + 1;
+    oldState = { machine_id: data[foundIdx][0], part_id: data[foundIdx][1], last_changed: data[foundIdx][2], next_due: data[foundIdx][3], status: data[foundIdx][4] };
     sheet.getRange(row, 3).setValue(lastChanged);
     sheet.getRange(row, 4).setValue(nextDueDate);
     sheet.getRange(row, 5).setValue(status);
   } else {
     sheet.appendRow([machineId, partId, lastChanged, nextDueDate, status]);
   }
+  _logAudit('schedule_updated', 'Spare_Parts_Schedule', machineId + '|' + partId, oldState, {
+    machine_id: machineId, part_id: partId, last_changed: lastChanged, next_due: nextDueDate, status: status
+  });
 }
 
 // Generates next sequential Defect_ID (e.g. DF-0001).
 // Scans existing IDs to find the highest number — safe against gaps/deletions.
 function _generateDefectId() {
+  if (!globalThis.__WRITE_LOCK_HELD__) {
+    throw new Error('_generateDefectId must be called inside a locked write operation.');
+  }
   var rows = _getSheetData(SHEETS.DEFECT_LOG);
   var max  = 0;
   rows.forEach(function(r) {
@@ -127,10 +206,12 @@ function _generateDefectId() {
 // Sets a defect's Status to 'Resolved'. Returns true if found, false otherwise.
 function _resolveDefect(defectId) {
   var sheet = _getSheet(SHEETS.DEFECT_LOG);
+  var metaCols = _getDefectMetaColumnsOrThrow();
   var data  = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][COL.DEFECT.ID]).trim() === String(defectId).trim()) {
       sheet.getRange(i + 1, COL.DEFECT.STATUS + 1).setValue('Resolved');
+      sheet.getRange(i + 1, metaCols.resolved_at).setValue(_formatDateTime(new Date()));
       return true;
     }
   }
@@ -146,9 +227,28 @@ function _resolveDefect(defectId) {
  */
 function getMachineList() {
   try {
+    var defects = _getSheetData(SHEETS.DEFECT_LOG);
+    var scheduleRows = _getSheetData(SHEETS.SCHEDULE);
     return _getSheetData(SHEETS.MACHINE_LIST)
       .filter(function(r) { return String(r[0]).trim() !== ''; })
       .map(function(r) {
+        var machineId = String(r[COL.MACHINE.ID]).trim();
+        var pendingDefectCount = 0, criticalPendingDefectCount = 0;
+        defects.forEach(function(d) {
+          if (String(d[COL.DEFECT.MACHINE_ID]).trim() === machineId && String(d[COL.DEFECT.STATUS]).trim() === 'Pending') {
+            pendingDefectCount++;
+            if (String(d[COL.DEFECT.SEVERITY]).trim() === 'Critical') criticalPendingDefectCount++;
+          }
+        });
+        var overduePartCount = 0, dueSoonPartCount = 0;
+        scheduleRows.forEach(function(s) {
+          if (String(s[COL.SCHEDULE.MACHINE_ID]).trim() !== machineId) return;
+          var next = _formatDate(s[COL.SCHEDULE.NEXT_DUE]);
+          if (!next) return;
+          var days = _dateDiffDays(next);
+          if (days < 0) overduePartCount++;
+          else if (days <= 30) dueSoonPartCount++;
+        });
         return {
           machine_id:     String(r[COL.MACHINE.ID]),
           scope:          String(r[COL.MACHINE.SCOPE]),
@@ -158,7 +258,11 @@ function getMachineList() {
           sn:             String(r[COL.MACHINE.SN]),
           range:          String(r[COL.MACHINE.RANGE]),
           operation_date: _formatDate(r[COL.MACHINE.OP_DATE]),
-          status:         String(r[COL.MACHINE.STATUS])
+          status:         String(r[COL.MACHINE.STATUS]),
+          pending_defect_count: pendingDefectCount,
+          critical_pending_defect_count: criticalPendingDefectCount,
+          overdue_part_count: overduePartCount,
+          due_soon_part_count: dueSoonPartCount
         };
       });
   } catch (e) { return { error: e.message }; }
@@ -309,49 +413,78 @@ function getMachineProfile(machineId) {
  *     details, operator, defect_id }
  */
 function submitMaintenanceLog(data) {
+  var lock = LockService.getScriptLock();
   try {
-    if (!data || !data.machine_id)  return { success: false, error: 'Machine ID is required.' };
-    if (!data.maintenance_date)     return { success: false, error: 'Maintenance Date is required.' };
-    if (!data.action_type)          return { success: false, error: 'Action Type is required.' };
-    if (!data.operator)             return { success: false, error: 'Operator name is required.' };
-    if (data.action_type === 'Part Replacement' && !data.part_id) {
-      return { success: false, error: 'Part ID is required for Part Replacement.' };
+    lock.waitLock(30000);
+    globalThis.__WRITE_LOCK_HELD__ = true;
+    var machineId = _required(data && data.machine_id, 'Machine ID');
+    var maintenanceDate = _required(data && data.maintenance_date, 'Maintenance Date');
+    var actionType = _required(data && data.action_type, 'Action Type');
+    var operator = _required(data && data.operator, 'Operator name');
+    var partId = String((data && data.part_id) || '').trim();
+    var defectId = String((data && data.defect_id) || '').trim();
+    var details = String((data && data.details) || '');
+    if (!_machineExists(machineId)) throw new Error('Machine not found: ' + machineId);
+    if (!_validateDateString(maintenanceDate)) throw new Error('Maintenance Date must be YYYY-MM-DD.');
+    if (!_isAllowed(actionType, ['Repair', 'Part Replacement', 'PM'])) throw new Error('Invalid Action Type.');
+    if (actionType === 'Part Replacement' && !partId) throw new Error('Part ID is required for Part Replacement.');
+    var partRow = null;
+    if (partId) {
+      partRow = _partExists(partId);
+      if (!partRow) throw new Error('Part not found: ' + partId);
+    }
+    var defectRow = null;
+    if (defectId) {
+      defectRow = _getDefectById(defectId);
+      if (!defectRow) throw new Error('Defect not found: ' + defectId);
+      if (String(defectRow[COL.DEFECT.MACHINE_ID]).trim() !== machineId) throw new Error('Defect does not belong to selected machine.');
+      if (String(defectRow[COL.DEFECT.STATUS]).trim() !== 'Pending') throw new Error('Defect must be Pending to resolve.');
     }
 
     var now             = new Date();
     var timestamp       = _formatDateTime(now);
-    var maintenanceDate = String(data.maintenance_date).trim();
-    var partId          = String(data.part_id  || '').trim();
-    var defectId        = String(data.defect_id || '').trim();
 
-    // ── Append to Maintenance_Log ──
+    // all validations done; write
     _getSheet(SHEETS.LOG).appendRow([
-      timestamp, data.machine_id, data.action_type,
-      partId, data.details || '', data.operator, maintenanceDate
+      timestamp, machineId, actionType,
+      partId, details, operator, maintenanceDate
     ]);
+    var maintenanceId = timestamp + '|' + machineId;
+    _logAudit('maintenance_created', 'Maintenance_Log', maintenanceId, null, {
+      machine_id: machineId, action_type: actionType, part_id: partId, defect_id: defectId, operator: operator, maintenance_date: maintenanceDate
+    });
 
-    // ── Schedule upsert (any action type, if part selected) ──
     if (partId) {
-      var masterRows = _getSheetData(SHEETS.PARTS_MASTER);
-      var partRow    = null;
-      for (var i = 0; i < masterRows.length; i++) {
-        if (String(masterRows[i][0]).trim() === partId) { partRow = masterRows[i]; break; }
-      }
-      if (!partRow) return { success: false, error: 'Part not found: ' + partId };
       var lifetimeYears = parseFloat(partRow[COL.PARTS_MASTER.LIFETIME]) || 1;
-      _upsertSchedule(data.machine_id, partId, maintenanceDate,
+      _upsertSchedule(machineId, partId, maintenanceDate,
                       _addYears(maintenanceDate, lifetimeYears), 'Active');
     }
 
-    // ── Resolve linked defect (Repair + defect_id selected) ──
-    if (data.action_type === 'Repair' && defectId) {
-      if (!_resolveDefect(defectId)) {
-        return { success: false, error: 'Defect not found: ' + defectId };
+    if (actionType === 'Repair' && defectId) {
+      var metaCols = _getDefectMetaColumnsOrThrow();
+      if (!_resolveDefect(defectId)) throw new Error('Defect not found: ' + defectId);
+      var sheet = _getSheet(SHEETS.DEFECT_LOG);
+      var rows = sheet.getDataRange().getValues();
+      for (var i = 1; i < rows.length; i++) {
+        if (String(rows[i][COL.DEFECT.ID]).trim() === defectId) {
+          sheet.getRange(i + 1, metaCols.root_cause).setValue(String(data.root_cause || ''));
+          sheet.getRange(i + 1, metaCols.corrective_action).setValue(String(data.corrective_action || ''));
+          sheet.getRange(i + 1, metaCols.resolved_by).setValue(operator);
+          sheet.getRange(i + 1, metaCols.linked_maintenance_id).setValue(maintenanceId);
+          break;
+        }
       }
+      _logAudit('defect_resolved', 'Defect_Log', defectId, { status: 'Pending' }, {
+        status: 'Resolved', root_cause: String(data.root_cause || ''), corrective_action: String(data.corrective_action || ''), resolved_by: operator
+      });
     }
 
-    return { success: true };
+    return { success: true, maintenance_id: maintenanceId };
   } catch (e) { return { success: false, error: e.message }; }
+  finally {
+    globalThis.__WRITE_LOCK_HELD__ = false;
+    try { lock.releaseLock(); } catch (ignore) {}
+  }
 }
 
 /**
@@ -363,24 +496,37 @@ function submitMaintenanceLog(data) {
  * @returns {{ success: boolean, defect_id?: string, error?: string }}
  */
 function reportDefect(data) {
+  var lock = LockService.getScriptLock();
   try {
-    if (!data || !data.machine_id) return { success: false, error: 'Machine ID is required.' };
-    if (!data.date_found)          return { success: false, error: 'Date Found is required.' };
-    if (!data.symptom)             return { success: false, error: 'Symptom description is required.' };
-    if (!data.severity)            return { success: false, error: 'Severity Level is required.' };
-    if (!data.reported_by)         return { success: false, error: 'Reported By is required.' };
+    lock.waitLock(30000);
+    globalThis.__WRITE_LOCK_HELD__ = true;
+    var machineId = _required(data && data.machine_id, 'Machine ID');
+    var dateFound = _required(data && data.date_found, 'Date Found');
+    var symptom = _required(data && data.symptom, 'Symptom description');
+    var severity = _required(data && data.severity, 'Severity Level');
+    var reportedBy = _required(data && data.reported_by, 'Reported By');
+    if (!_machineExists(machineId)) throw new Error('Machine not found: ' + machineId);
+    if (!_validateDateString(dateFound)) throw new Error('Date Found must be YYYY-MM-DD.');
+    if (!_isAllowed(severity, ['Low', 'Medium', 'High', 'Critical'])) throw new Error('Invalid Severity Level.');
 
     var defectId  = _generateDefectId();
     var timestamp = _formatDateTime(new Date());
 
     _getSheet(SHEETS.DEFECT_LOG).appendRow([
-      defectId, timestamp, data.machine_id,
-      data.date_found, data.symptom, data.severity,
-      data.reported_by, 'Pending'
+      defectId, timestamp, machineId,
+      dateFound, symptom, severity,
+      reportedBy, 'Pending', '', '', '', '', ''
     ]);
+    _logAudit('defect_reported', 'Defect_Log', defectId, null, {
+      machine_id: machineId, date_found: dateFound, severity: severity, reported_by: reportedBy, status: 'Pending'
+    });
 
     return { success: true, defect_id: defectId };
   } catch (e) { return { success: false, error: e.message }; }
+  finally {
+    globalThis.__WRITE_LOCK_HELD__ = false;
+    try { lock.releaseLock(); } catch (ignore) {}
+  }
 }
 
 /**

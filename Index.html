@@ -133,6 +133,10 @@
         <button id="filter-all"      onclick="setFilter('all')"      class="btn-s" style="font-size:.78rem;padding:.38rem .75rem;">All</button>
         <button id="filter-Active"   onclick="setFilter('Active')"   class="btn-s" style="font-size:.78rem;padding:.38rem .75rem;">Active</button>
         <button id="filter-Inactive" onclick="setFilter('Inactive')" class="btn-s" style="font-size:.78rem;padding:.38rem .75rem;">Inactive</button>
+        <button id="filter-pending" onclick="setFilter('pending')" class="btn-s" style="font-size:.78rem;padding:.38rem .75rem;">Has Pending Defects</button>
+        <button id="filter-critical" onclick="setFilter('critical')" class="btn-s" style="font-size:.78rem;padding:.38rem .75rem;">Critical Defects</button>
+        <button id="filter-overdue" onclick="setFilter('overdue')" class="btn-s" style="font-size:.78rem;padding:.38rem .75rem;">Overdue Parts</button>
+        <button id="filter-duesoon" onclick="setFilter('duesoon')" class="btn-s" style="font-size:.78rem;padding:.38rem .75rem;">Due Soon</button>
       </div>
     </div>
     <div id="machine-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;"></div>
@@ -278,6 +282,15 @@
                 <option value="">— None / Not Applicable —</option>
               </select>
               <p id="defect-load-hint" style="display:none;font-size:.73rem;color:#92400e;margin-top:.3rem;">Loading pending defects…</p>
+            </div>
+          </div>
+
+          <div id="defect-resolution-details" style="display:none;margin-bottom:1rem;">
+            <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:.5rem;padding:.75rem .9rem;">
+              <label class="flabel" for="f-root-cause">Root Cause (Optional)</label>
+              <textarea id="f-root-cause" rows="2" class="fc" style="resize:vertical;" placeholder="What caused this defect?"></textarea>
+              <label class="flabel" for="f-corrective-action" style="margin-top:.6rem;">Corrective Action (Optional)</label>
+              <textarea id="f-corrective-action" rows="2" class="fc" style="resize:vertical;" placeholder="What corrective action was performed?"></textarea>
             </div>
           </div>
 
@@ -520,7 +533,12 @@ function showDashboard() {
 function renderDash() {
   var q = S.query.toLowerCase(), f = S.statusFilter;
   var filtered = (S.machines||[]).filter(function(m){
-    return (f==='all'||m.status===f) &&
+    var filterMatch = (f==='all'||m.status===f ||
+      (f==='pending' && m.pending_defect_count > 0) ||
+      (f==='critical' && m.critical_pending_defect_count > 0) ||
+      (f==='overdue' && m.overdue_part_count > 0) ||
+      (f==='duesoon' && m.due_soon_part_count > 0));
+    return filterMatch &&
       (!q||[m.machine_id,m.machine_name,m.scope,m.manufacturer].some(function(v){
         return (v||'').toLowerCase().includes(q);
       }));
@@ -534,9 +552,12 @@ function renderDash() {
     mkStat('Showing',        filtered.length,   '#d97706');
 
   $('machine-grid').innerHTML = filtered.map(mkMachineCard).join('');
+  Array.prototype.forEach.call(document.querySelectorAll('.machine-card[data-machine-id]'), function(el){
+    el.addEventListener('click', function(){ loadProfile(el.dataset.machineId); });
+  });
   $('no-results').style.display = filtered.length ? 'none' : 'block';
 
-  ['all','Active','Inactive'].forEach(function(v){
+  ['all','Active','Inactive','pending','critical','overdue','duesoon'].forEach(function(v){
     var btn = $('filter-'+v); if (!btn) return;
     var on  = v===S.statusFilter;
     btn.style.cssText = 'font-size:.78rem;padding:.38rem .75rem;border-radius:.5rem;cursor:pointer;' +
@@ -554,7 +575,12 @@ function mkStat(label, val, color) {
 function mkMachineCard(m) {
   var bg = m.status==='Active'?'#dbeafe':'#f1f5f9';
   var co = m.status==='Active'?'#1e40af':'#475569';
-  return '<div class="machine-card" onclick="loadProfile(\''+esc(m.machine_id)+'\')"'+
+  var alerts = '';
+  if (m.pending_defect_count > 0) alerts += '<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fbbf24;">'+esc(m.pending_defect_count)+' Pending Defects</span> ';
+  if (m.critical_pending_defect_count > 0) alerts += '<span class="badge" style="background:#fee2e2;color:#991b1b;border:1px solid #f87171;">'+esc(m.critical_pending_defect_count)+' Critical</span> ';
+  if (m.overdue_part_count > 0) alerts += '<span class="badge" style="background:#fee2e2;color:#991b1b;border:1px solid #f87171;">'+esc(m.overdue_part_count)+' Parts Overdue</span> ';
+  if (m.due_soon_part_count > 0) alerts += '<span class="badge" style="background:#fef9c3;color:#713f12;border:1px solid #fde047;">Parts Due Soon</span>';
+  return '<div class="machine-card" data-machine-id="'+esc(m.machine_id)+'"'+
     ' style="background:#fff;border-radius:.75rem;border:1px solid #e2e8f0;padding:1.25rem;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.05);">'+
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.5rem;">'+
       '<h3 style="font-size:.9375rem;font-weight:600;color:#1e293b;margin:0;line-height:1.3;">'+esc(m.machine_name)+'</h3>'+
@@ -563,6 +589,7 @@ function mkMachineCard(m) {
     '<p style="font-size:.75rem;color:#64748b;margin:0 0 .2rem;"><b style="color:#475569;">ID:</b> '+esc(m.machine_id)+'</p>'+
     '<p style="font-size:.75rem;color:#64748b;margin:0 0 .2rem;"><b style="color:#475569;">Scope:</b> '+esc(m.scope)+'</p>'+
     '<p style="font-size:.75rem;color:#64748b;margin:0 0 .75rem;"><b style="color:#475569;">Mfr:</b> '+esc(m.manufacturer)+' · '+esc(m.model)+'</p>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.6rem;">'+alerts+'</div>'+
     '<div style="display:flex;justify-content:space-between;padding-top:.65rem;border-top:1px solid #f1f5f9;">'+
       '<span style="font-size:.7rem;color:#94a3b8;">Since: '+esc(m.operation_date)+'</span>'+
       '<span style="font-size:.75rem;font-weight:600;color:#1e40af;">View Profile →</span>'+
@@ -754,6 +781,7 @@ function onActionChange() {
 
   // Defect link section — only for Repair
   $('defect-link-section').style.display = isRepair ? 'block' : 'none';
+  $('defect-resolution-details').style.display = isRepair ? 'block' : 'none';
   if (isRepair) {
     var machineId = $('f-machine').value;
     if (machineId) { loadPendingDefects(machineId); }
@@ -816,6 +844,7 @@ function resetMaintForm() {
   $('part-req-label').style.display = 'none';
   $('part-opt-label').style.display = 'inline';
   $('defect-link-section').style.display = 'none';
+  $('defect-resolution-details').style.display = 'none';
   $('defect-load-hint').style.display    = 'none';
   var btn = $('maint-submit');
   btn.disabled = false; btn.textContent = 'Save Entry';
@@ -829,6 +858,8 @@ function submitMaintForm(e) {
   var defectId   = $('f-defect-id') ? $('f-defect-id').value.trim() : '';
   var partId     = $('f-part').value.trim();
   var details    = $('f-details').value.trim();
+  var rootCause  = $('f-root-cause').value.trim();
+  var correctiveAction = $('f-corrective-action').value.trim();
   var operator   = $('f-operator').value.trim();
   var errEl      = $('maint-error');
 
@@ -847,7 +878,8 @@ function submitMaintForm(e) {
 
   call('submitMaintenanceLog',
     { machine_id:machineId, maintenance_date:maintDate, action_type:actionType,
-      defect_id:defectId, part_id:partId, details:details, operator:operator },
+      defect_id:defectId, part_id:partId, details:details, operator:operator,
+      root_cause:rootCause, corrective_action:correctiveAction },
     function(res){
       if (res && res.success===false){
         errEl.textContent = res.error||'Submission failed.';
