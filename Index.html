@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Machine History &amp; Maintenance</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    /* ── Views ── */
+    .view        { display: none; }
+    .view.active { display: block; }
+
+    /* ── Card hover ── */
+    .machine-card { transition: box-shadow .2s, transform .2s; }
+    .machine-card:hover { box-shadow: 0 6px 24px rgba(30,64,175,.18); transform: translateY(-2px); }
+
+    /* ── Loader ── */
+    #loader {
+      position: fixed; inset: 0; background: rgba(15,23,42,.5);
+      display: flex; align-items: center; justify-content: center; z-index: 9000;
+    }
+    .spinner {
+      width: 46px; height: 46px;
+      border: 5px solid #e2e8f0; border-top-color: #3b82f6;
+      border-radius: 50%; animation: spin .75s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Toast ── */
+    #toast-wrap {
+      position: fixed; bottom: 1.25rem; right: 1.25rem;
+      z-index: 9999; display: flex; flex-direction: column; gap: .5rem;
+    }
+    .toast {
+      min-width: 260px; padding: .7rem 1rem; border-radius: .5rem;
+      color: #fff; font-size: .875rem; box-shadow: 0 4px 14px rgba(0,0,0,.22);
+      animation: slideUp .25s ease;
+    }
+    @keyframes slideUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; } }
+
+    /* ── Form control ── */
+    .fc {
+      width: 100%; padding: .5rem .75rem;
+      border: 1px solid #cbd5e1; border-radius: .5rem;
+      font-size: .875rem; font-family: inherit; box-sizing: border-box; outline: none;
+    }
+    .fc:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.18); }
+    .fc:disabled { background: #f8fafc; opacity: .55; cursor: not-allowed; }
+
+    /* ── Buttons ── */
+    .btn-p { background:#1e40af; color:#fff; border:none; cursor:pointer; padding:.5rem 1.1rem; border-radius:.5rem; font-size:.875rem; font-weight:600; transition:background .15s; }
+    .btn-p:hover { background:#1e3a8a; }
+    .btn-p:disabled { opacity:.6; cursor:not-allowed; }
+    .btn-s { background:#fff; color:#374151; border:1px solid #cbd5e1; cursor:pointer; padding:.5rem 1.1rem; border-radius:.5rem; font-size:.875rem; font-weight:500; transition:background .15s; }
+    .btn-s:hover { background:#f8fafc; }
+    .btn-w { background:#d97706; color:#fff; border:none; cursor:pointer; padding:.5rem 1.1rem; border-radius:.5rem; font-size:.875rem; font-weight:600; transition:background .15s; }
+    .btn-w:hover { background:#b45309; }
+    .btn-w:disabled { opacity:.6; cursor:not-allowed; }
+
+    /* ── Inline badge ── */
+    .badge { display:inline-block; font-size:.7rem; font-weight:600; padding:.15rem .55rem; border-radius:9999px; white-space:nowrap; }
+
+    /* ── Section card ── */
+    .section-card { background:#fff; border-radius:.75rem; border:1px solid #e2e8f0; padding:1.5rem; margin-bottom:1.25rem; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+    .section-title { font-size:.9375rem; font-weight:600; color:#374151; margin:0 0 .75rem; display:flex; align-items:center; gap:.5rem; }
+    .dot-blue   { width:8px; height:8px; border-radius:50%; background:#1e40af; display:inline-block; }
+    .dot-grey   { width:8px; height:8px; border-radius:50%; background:#94a3b8; display:inline-block; }
+    .dot-amber  { width:8px; height:8px; border-radius:50%; background:#d97706; display:inline-block; }
+    .dot-red    { width:8px; height:8px; border-radius:50%; background:#dc2626; display:inline-block; }
+
+    /* ── Table base ── */
+    .data-table { width:100%; border-collapse:collapse; font-size:.875rem; }
+    .data-table thead tr { border-bottom:2px solid #e2e8f0; text-align:left; }
+    .data-table th { padding:.4rem .75rem .4rem 0; font-size:.68rem; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+    .data-table tbody tr { border-bottom:1px solid #f1f5f9; }
+    .data-table tbody tr:last-child { border-bottom:none; }
+    .data-table td { padding:.6rem .75rem .6rem 0; vertical-align:top; }
+
+    /* ── Active defect alert card ── */
+    .defect-alert-card { background:#fffbeb; border:1px solid #fbbf24; border-radius:.75rem; padding:1.25rem 1.5rem; margin-bottom:1.25rem; }
+    .defect-alert-card.no-defects { background:#f0fdf4; border-color:#86efac; }
+
+    /* ── Print ── */
+    @media print {
+      body * { visibility:hidden !important; }
+      #print-area, #print-area * { visibility:visible !important; }
+      #print-area { position:fixed !important; left:0 !important; top:0 !important; width:100% !important; background:#fff !important; }
+      @page { size:A4 portrait; margin:14mm 18mm; }
+      .no-print { display:none !important; }
+      .data-table { font-size:10px; }
+      .data-table th, .data-table td { border:1px solid #d1d5db; padding:3px 6px; }
+      .data-table th { background:#f3f4f6 !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      .badge { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      .section-card { box-shadow:none; border:1px solid #e2e8f0; margin-bottom:.75rem; padding:1rem; }
+      #print-header { display:block !important; }
+      .page-break { page-break-before:always; }
+    }
+    #print-header { display:none; }
+  </style>
+</head>
+
+<body style="background:#f1f5f9;min-height:100vh;font-family:ui-sans-serif,system-ui,sans-serif;">
+
+<!-- ═══════════════════════════════════ NAV ═══════════════════════════════════ -->
+<nav class="no-print" style="background:#1e40af;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.2);">
+  <div style="max-width:80rem;margin:0 auto;padding:.7rem 1.5rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap;">
+    <button onclick="showDashboard()" style="display:flex;align-items:center;gap:.5rem;background:none;border:none;color:#fff;cursor:pointer;font-size:1.05rem;font-weight:700;letter-spacing:-.02em;">
+      <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
+      </svg>
+      Machine History
+    </button>
+    <div style="display:flex;gap:.4rem;flex-wrap:wrap;">
+      <button onclick="showDashboard()"   class="btn-s" style="font-size:.78rem;padding:.35rem .8rem;color:#1e40af;">Dashboard</button>
+      <button onclick="showFormView(null)" class="btn-p" style="font-size:.78rem;padding:.35rem .8rem;background:#2563eb;">+ Maintenance</button>
+      <button onclick="showDefectForm(null)" class="btn-w" style="font-size:.78rem;padding:.35rem .8rem;">⚠ Report Defect</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════ MAIN ═══════════════════════════════════ -->
+<main style="max-width:80rem;margin:0 auto;padding:1.5rem;">
+
+  <!-- ─────────────── DASHBOARD ─────────────── -->
+  <div id="view-dashboard" class="view">
+    <div id="stats-bar" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;"></div>
+    <div class="no-print" style="display:flex;flex-wrap:wrap;gap:.75rem;margin-bottom:1.25rem;align-items:center;">
+      <input id="search-input" type="text" placeholder="Search name, ID, scope, manufacturer…"
+        class="fc" style="flex:1;min-width:200px;" oninput="filterDashboard()"/>
+      <div style="display:flex;gap:.4rem;">
+        <button id="filter-all"      onclick="setFilter('all')"      class="btn-s" style="font-size:.78rem;padding:.38rem .75rem;">All</button>
+        <button id="filter-Active"   onclick="setFilter('Active')"   class="btn-s" style="font-size:.78rem;padding:.38rem .75rem;">Active</button>
+        <button id="filter-Inactive" onclick="setFilter('Inactive')" class="btn-s" style="font-size:.78rem;padding:.38rem .75rem;">Inactive</button>
+      </div>
+    </div>
+    <div id="machine-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;"></div>
+    <p id="no-results" style="display:none;text-align:center;color:#64748b;padding:3rem 0;">No machines match your search.</p>
+  </div>
+
+  <!-- ─────────────── MACHINE PROFILE ─────────────── -->
+  <div id="view-profile" class="view">
+
+    <div class="no-print" style="display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1.25rem;">
+      <button onclick="showDashboard()"             class="btn-s">← Back</button>
+      <button onclick="window.print()"              class="btn-s">🖨 Print Report</button>
+      <button id="btn-log-for-machine"              class="btn-p">+ Log Entry</button>
+      <button id="btn-defect-for-machine"           class="btn-w">⚠ Report Defect</button>
+    </div>
+
+    <div id="print-area">
+      <div id="print-header" style="margin-bottom:1rem;padding-bottom:.75rem;border-bottom:2px solid #1e40af;">
+        <h1 style="font-size:1.15rem;font-weight:700;color:#1e3a8a;margin:0 0 .2rem;">Machine History &amp; Maintenance Report</h1>
+        <p id="print-date" style="font-size:.7rem;color:#64748b;margin:0;"></p>
+      </div>
+
+      <!-- Machine info -->
+      <div id="machine-info-card" class="section-card"></div>
+
+      <!-- ★ Active Defects Alert ★ -->
+      <div id="active-defects-card" class="defect-alert-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;">
+          <h2 style="font-size:.9375rem;font-weight:700;color:#92400e;margin:0;display:flex;align-items:center;gap:.5rem;">
+            ⚠ Active Defects (Pending)
+          </h2>
+          <span id="pending-count-badge" class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fbbf24;font-size:.75rem;"></span>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Defect ID</th><th>Date Found</th><th>Severity</th>
+                <th>Symptom</th><th>Reported By</th>
+              </tr>
+            </thead>
+            <tbody id="active-defects-tbody"></tbody>
+          </table>
+          <p id="active-defects-empty" style="display:none;color:#16a34a;font-size:.875rem;padding:.6rem 0;">
+            ✓ No active defects for this machine.
+          </p>
+        </div>
+      </div>
+
+      <!-- Parts schedule -->
+      <div class="section-card">
+        <h2 class="section-title"><span class="dot-blue"></span>Spare Parts Schedule</h2>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr>
+              <th>Part</th><th>Part ID</th><th>Last Changed</th><th>Next Due</th><th>Status</th>
+            </tr></thead>
+            <tbody id="schedule-tbody"></tbody>
+          </table>
+          <p id="schedule-empty" style="display:none;color:#94a3b8;font-size:.875rem;padding:.6rem 0;">No parts schedule recorded.</p>
+        </div>
+      </div>
+
+      <!-- Maintenance history -->
+      <div class="section-card">
+        <h2 class="section-title"><span class="dot-grey"></span>Maintenance History</h2>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr>
+              <th>Maint. Date</th><th>Action</th><th>Part</th>
+              <th>Details</th><th>Operator</th><th>Logged At</th>
+            </tr></thead>
+            <tbody id="log-tbody"></tbody>
+          </table>
+          <p id="log-empty" style="display:none;color:#94a3b8;font-size:.875rem;padding:.6rem 0;">No maintenance logs recorded.</p>
+        </div>
+      </div>
+
+      <!-- ★ Full Defect History ★ -->
+      <div class="section-card page-break">
+        <h2 class="section-title"><span class="dot-amber"></span>Defect History (All)</h2>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr>
+              <th>Defect ID</th><th>Date Found</th><th>Severity</th>
+              <th>Symptom</th><th>Reported By</th><th>Status</th><th>Logged At</th>
+            </tr></thead>
+            <tbody id="defect-history-tbody"></tbody>
+          </table>
+          <p id="defect-history-empty" style="display:none;color:#94a3b8;font-size:.875rem;padding:.6rem 0;">No defect records found.</p>
+        </div>
+      </div>
+    </div><!-- /print-area -->
+  </div>
+
+  <!-- ─────────────── MAINTENANCE FORM ─────────────── -->
+  <div id="view-form" class="view">
+    <div style="max-width:34rem;margin:0 auto;">
+      <div class="no-print" style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem;">
+        <button onclick="showDashboard()" class="btn-s">← Back</button>
+        <h1 style="font-size:1.05rem;font-weight:700;color:#1e293b;margin:0;">Log Maintenance Entry</h1>
+      </div>
+
+      <div class="section-card" style="margin-bottom:0;">
+        <form id="entry-form" onsubmit="submitMaintForm(event)" novalidate>
+
+          <!-- Machine -->
+          <div style="margin-bottom:1rem;">
+            <label class="flabel" for="f-machine">Machine <span style="color:#ef4444;">*</span></label>
+            <select id="f-machine" required class="fc" onchange="onMachineChange()">
+              <option value="">— Select Machine —</option>
+            </select>
+          </div>
+
+          <!-- Maintenance Date -->
+          <div style="margin-bottom:1rem;">
+            <label class="flabel" for="f-date">
+              Maintenance Date <span style="color:#ef4444;">*</span>
+              <span style="font-size:.73rem;color:#64748b;font-weight:400;margin-left:.25rem;">(editable for backdated entry)</span>
+            </label>
+            <input id="f-date" type="date" required class="fc"/>
+          </div>
+
+          <!-- Action Type -->
+          <div style="margin-bottom:1rem;">
+            <label class="flabel" for="f-action">Action Type <span style="color:#ef4444;">*</span></label>
+            <select id="f-action" required onchange="onActionChange()" class="fc">
+              <option value="">— Select Action —</option>
+              <option value="Repair">Repair</option>
+              <option value="Part Replacement">Part Replacement</option>
+              <option value="PM">PM (Preventive Maintenance)</option>
+            </select>
+          </div>
+
+          <!-- ★ Link to Pending Defect (Repair only) ★ -->
+          <div id="defect-link-section" style="display:none;margin-bottom:1rem;">
+            <div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:.5rem;padding:.75rem .9rem;">
+              <label class="flabel" style="color:#92400e;margin-bottom:.35rem;" for="f-defect-id">
+                🔗 Link to Pending Defect
+                <span style="font-size:.73rem;font-weight:400;color:#78350f;margin-left:.25rem;">(Optional — marks the defect as Resolved on save)</span>
+              </label>
+              <select id="f-defect-id" class="fc" style="background:#fff;">
+                <option value="">— None / Not Applicable —</option>
+              </select>
+              <p id="defect-load-hint" style="display:none;font-size:.73rem;color:#92400e;margin-top:.3rem;">Loading pending defects…</p>
+            </div>
+          </div>
+
+          <!-- Part ID -->
+          <div style="margin-bottom:1rem;">
+            <label class="flabel" for="f-part">
+              Part
+              <span id="part-req-label" style="color:#ef4444;display:none;">*</span>
+              <span id="part-opt-label" style="font-size:.73rem;color:#64748b;font-weight:400;margin-left:.25rem;">(Optional — select if a part was involved)</span>
+            </label>
+            <select id="f-part" class="fc" onchange="onPartChange()">
+              <option value="">— None / Not Applicable —</option>
+            </select>
+            <p id="part-hint" style="display:none;margin-top:.3rem;font-size:.73rem;color:#0369a1;background:#f0f9ff;border:1px solid #bae6fd;border-radius:.35rem;padding:.3rem .6rem;"></p>
+          </div>
+
+          <!-- Details -->
+          <div style="margin-bottom:1rem;">
+            <label class="flabel" for="f-details">Details</label>
+            <textarea id="f-details" rows="3" class="fc" style="resize:vertical;" placeholder="Work performed, observations, parts used…"></textarea>
+          </div>
+
+          <!-- Operator -->
+          <div style="margin-bottom:1.5rem;">
+            <label class="flabel" for="f-operator">Operator Name <span style="color:#ef4444;">*</span></label>
+            <input id="f-operator" type="text" required placeholder="Your name" class="fc"/>
+          </div>
+
+          <div id="maint-error" style="display:none;margin-bottom:1rem;padding:.7rem .9rem;background:#fef2f2;border:1px solid #fecaca;border-radius:.5rem;color:#dc2626;font-size:.875rem;"></div>
+          <button id="maint-submit" type="submit" class="btn-p" style="width:100%;padding:.65rem;">Save Entry</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────────── DEFECT REPORT FORM ─────────────── -->
+  <div id="view-defect-form" class="view">
+    <div style="max-width:34rem;margin:0 auto;">
+      <div class="no-print" style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem;">
+        <button onclick="showDashboard()" class="btn-s">← Back</button>
+        <div>
+          <h1 style="font-size:1.05rem;font-weight:700;color:#1e293b;margin:0;">Report Machine Defect</h1>
+          <p style="font-size:.78rem;color:#64748b;margin:.1rem 0 0;">Log a new machine issue or breakdown for tracking and follow-up.</p>
+        </div>
+      </div>
+
+      <div class="section-card" style="margin-bottom:0;border-top:3px solid #d97706;">
+        <form id="defect-form" onsubmit="submitDefectForm(event)" novalidate>
+
+          <!-- Machine -->
+          <div style="margin-bottom:1rem;">
+            <label class="flabel" for="df-machine">Machine <span style="color:#ef4444;">*</span></label>
+            <select id="df-machine" required class="fc">
+              <option value="">— Select Machine —</option>
+            </select>
+          </div>
+
+          <!-- Date Found -->
+          <div style="margin-bottom:1rem;">
+            <label class="flabel" for="df-date">
+              Date Found <span style="color:#ef4444;">*</span>
+              <span style="font-size:.73rem;color:#64748b;font-weight:400;margin-left:.25rem;">(defaults to today)</span>
+            </label>
+            <input id="df-date" type="date" required class="fc"/>
+          </div>
+
+          <!-- Symptom -->
+          <div style="margin-bottom:1rem;">
+            <label class="flabel" for="df-symptom">
+              Symptom / Description <span style="color:#ef4444;">*</span>
+            </label>
+            <textarea id="df-symptom" rows="4" required class="fc" style="resize:vertical;"
+              placeholder="Describe the defect clearly — what is observed, what sounds/behavior, when it occurs…"></textarea>
+          </div>
+
+          <!-- Severity -->
+          <div style="margin-bottom:1rem;">
+            <label class="flabel" for="df-severity">Severity Level <span style="color:#ef4444;">*</span></label>
+            <select id="df-severity" required class="fc" onchange="onSeverityChange()">
+              <option value="">— Select Severity —</option>
+              <option value="Low">Low — Minor issue, machine still operational</option>
+              <option value="Medium">Medium — Degraded performance, monitor closely</option>
+              <option value="High">High — Significant risk, schedule repair soon</option>
+              <option value="Critical">Critical — Machine must be stopped immediately</option>
+            </select>
+            <div id="severity-hint" style="display:none;margin-top:.35rem;font-size:.73rem;padding:.3rem .6rem;border-radius:.35rem;"></div>
+          </div>
+
+          <!-- Reported By -->
+          <div style="margin-bottom:1.5rem;">
+            <label class="flabel" for="df-reporter">Reported By <span style="color:#ef4444;">*</span></label>
+            <input id="df-reporter" type="text" required placeholder="Your name" class="fc"/>
+          </div>
+
+          <div id="defect-error" style="display:none;margin-bottom:1rem;padding:.7rem .9rem;background:#fef2f2;border:1px solid #fecaca;border-radius:.5rem;color:#dc2626;font-size:.875rem;"></div>
+          <button id="defect-submit" type="submit" class="btn-w" style="width:100%;padding:.65rem;">Submit Defect Report</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- ═══════ LOADER / TOAST ═══════ -->
+<div id="loader" style="display:none;">
+  <div style="text-align:center;">
+    <div class="spinner" style="margin:0 auto .75rem;"></div>
+    <p style="color:#fff;font-size:.875rem;">Loading…</p>
+  </div>
+</div>
+<div id="toast-wrap"></div>
+
+<style>
+  .flabel { display:block; font-size:.875rem; font-weight:500; color:#374151; margin-bottom:.3rem; }
+</style>
+
+<!-- ═══════════════════════════════════════════════════════════
+     APPLICATION JS
+════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+// ──────────────────────────────────────────────
+// STATE
+// ──────────────────────────────────────────────
+var S = {
+  machines:     [],
+  dropdowns:    null,   // { machines, parts, action_types, severity_levels }
+  statusFilter: 'all',
+  query:        '',
+  profileId:    null    // machine currently open in profile view
+};
+
+// ──────────────────────────────────────────────
+// UTILITIES
+// ──────────────────────────────────────────────
+var $ = function(id) { return document.getElementById(id); };
+
+function showLoader() { $('loader').style.display = 'flex'; }
+function hideLoader() { $('loader').style.display = 'none'; }
+
+function toast(msg, type) {
+  var pal = { success:'#16a34a', error:'#dc2626', info:'#2563eb', warn:'#d97706' };
+  var el  = document.createElement('div');
+  el.className = 'toast';
+  el.style.background = pal[type] || pal.info;
+  el.textContent = msg;
+  $('toast-wrap').appendChild(el);
+  setTimeout(function(){ el.remove(); }, 5000);
+}
+
+function showView(id) {
+  document.querySelectorAll('.view').forEach(function(v){ v.classList.remove('active'); });
+  var el = $('view-' + id);
+  if (el) { el.classList.add('active'); window.scrollTo(0, 0); }
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function todayISO() {
+  // Returns YYYY-MM-DD in local time
+  var d = new Date();
+  return d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
+
+function truncate(str, n) {
+  str = String(str||'');
+  return str.length > n ? str.substring(0, n) + '…' : str;
+}
+
+// ──────────────────────────────────────────────
+// SERVER WRAPPER (with full-screen loader)
+// ──────────────────────────────────────────────
+function call(fn, payload, ok, fail) {
+  showLoader();
+  var runner = google.script.run
+    .withSuccessHandler(function(res){
+      hideLoader();
+      if (res && res.error){ toast('Error: ' + res.error, 'error'); if (fail) fail(res.error); return; }
+      ok(res);
+    })
+    .withFailureHandler(function(err){
+      hideLoader();
+      toast('Server error: ' + (err.message || err), 'error');
+      if (fail) fail(err);
+    });
+  payload !== undefined ? runner[fn](payload) : runner[fn]();
+}
+
+// Quiet call — no full-screen loader (used for secondary async loads)
+function callQ(fn, payload, ok, fail) {
+  var runner = google.script.run
+    .withSuccessHandler(function(res){
+      if (res && res.error){ if (fail) fail(res.error); return; }
+      ok(res);
+    })
+    .withFailureHandler(function(err){ if (fail) fail(err); });
+  payload !== undefined ? runner[fn](payload) : runner[fn]();
+}
+
+// ──────────────────────────────────────────────
+// BADGE HELPERS
+// ──────────────────────────────────────────────
+function scheduleBadge(status, days) {
+  if (status==='OVERDUE')  return { s:'background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;', l:'Overdue' };
+  if (status==='DUE_SOON') return { s:'background:#fef9c3;color:#713f12;border:1px solid #fde047;', l:'Due Soon ('+days+'d)' };
+  return { s:'background:#dcfce7;color:#166534;border:1px solid #86efac;', l: days<9999 ? days+'d' : 'OK' };
+}
+
+function severityStyle(sev) {
+  var map = {
+    'Low':      'background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;',
+    'Medium':   'background:#fef3c7;color:#92400e;border:1px solid #fcd34d;',
+    'High':     'background:#fed7aa;color:#9a3412;border:1px solid #fb923c;',
+    'Critical': 'background:#fee2e2;color:#991b1b;border:1px solid #f87171;'
+  };
+  return map[sev] || map['Low'];
+}
+
+function defectStatusStyle(st) {
+  if (st==='Resolved') return 'background:#dcfce7;color:#166534;border:1px solid #86efac;';
+  return 'background:#fef3c7;color:#92400e;border:1px solid #fcd34d;'; // Pending
+}
+
+// ──────────────────────────────────────────────
+// DASHBOARD
+// ──────────────────────────────────────────────
+function showDashboard() {
+  showView('dashboard');
+  if (S.machines.length === 0) {
+    call('getMachineList', undefined, function(list){ S.machines=list||[]; renderDash(); });
+  } else { renderDash(); }
+}
+
+function renderDash() {
+  var q = S.query.toLowerCase(), f = S.statusFilter;
+  var filtered = (S.machines||[]).filter(function(m){
+    return (f==='all'||m.status===f) &&
+      (!q||[m.machine_id,m.machine_name,m.scope,m.manufacturer].some(function(v){
+        return (v||'').toLowerCase().includes(q);
+      }));
+  });
+
+  var act = S.machines.filter(function(m){ return m.status==='Active'; }).length;
+  $('stats-bar').innerHTML =
+    mkStat('Total Machines', S.machines.length, '#1e40af') +
+    mkStat('Active',         act,               '#16a34a') +
+    mkStat('Inactive',       S.machines.length-act, '#64748b') +
+    mkStat('Showing',        filtered.length,   '#d97706');
+
+  $('machine-grid').innerHTML = filtered.map(mkMachineCard).join('');
+  $('no-results').style.display = filtered.length ? 'none' : 'block';
+
+  ['all','Active','Inactive'].forEach(function(v){
+    var btn = $('filter-'+v); if (!btn) return;
+    var on  = v===S.statusFilter;
+    btn.style.cssText = 'font-size:.78rem;padding:.38rem .75rem;border-radius:.5rem;cursor:pointer;' +
+      (on ? 'background:#1e40af;color:#fff;border:1px solid #1e40af;font-weight:600;'
+          : 'background:#fff;color:#374151;border:1px solid #cbd5e1;font-weight:500;');
+  });
+}
+
+function mkStat(label, val, color) {
+  return '<div style="background:#fff;border-radius:.75rem;border:1px solid #e2e8f0;padding:1rem;box-shadow:0 1px 3px rgba(0,0,0,.05);">'+
+    '<p style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;margin:0 0 .2rem;">'+esc(label)+'</p>'+
+    '<p style="font-size:1.75rem;font-weight:700;color:'+color+';margin:0;">'+val+'</p></div>';
+}
+
+function mkMachineCard(m) {
+  var bg = m.status==='Active'?'#dbeafe':'#f1f5f9';
+  var co = m.status==='Active'?'#1e40af':'#475569';
+  return '<div class="machine-card" onclick="loadProfile(\''+esc(m.machine_id)+'\')"'+
+    ' style="background:#fff;border-radius:.75rem;border:1px solid #e2e8f0;padding:1.25rem;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.05);">'+
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.5rem;">'+
+      '<h3 style="font-size:.9375rem;font-weight:600;color:#1e293b;margin:0;line-height:1.3;">'+esc(m.machine_name)+'</h3>'+
+      '<span class="badge" style="'+( m.status==='Active'?'background:#dbeafe;color:#1e40af;border:1px solid #93c5fd;':'background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;')+'">'+esc(m.status)+'</span>'+
+    '</div>'+
+    '<p style="font-size:.75rem;color:#64748b;margin:0 0 .2rem;"><b style="color:#475569;">ID:</b> '+esc(m.machine_id)+'</p>'+
+    '<p style="font-size:.75rem;color:#64748b;margin:0 0 .2rem;"><b style="color:#475569;">Scope:</b> '+esc(m.scope)+'</p>'+
+    '<p style="font-size:.75rem;color:#64748b;margin:0 0 .75rem;"><b style="color:#475569;">Mfr:</b> '+esc(m.manufacturer)+' · '+esc(m.model)+'</p>'+
+    '<div style="display:flex;justify-content:space-between;padding-top:.65rem;border-top:1px solid #f1f5f9;">'+
+      '<span style="font-size:.7rem;color:#94a3b8;">Since: '+esc(m.operation_date)+'</span>'+
+      '<span style="font-size:.75rem;font-weight:600;color:#1e40af;">View Profile →</span>'+
+    '</div></div>';
+}
+
+function filterDashboard() { S.query = $('search-input').value; renderDash(); }
+function setFilter(v)       { S.statusFilter = v; renderDash(); }
+
+// ──────────────────────────────────────────────
+// MACHINE PROFILE
+// ──────────────────────────────────────────────
+function loadProfile(id) {
+  S.profileId = id;
+  call('getMachineProfile', id, function(p){ renderProfile(p); showView('profile'); });
+}
+
+function renderProfile(p) {
+  var m = p.machine;
+  $('print-date').textContent = 'Printed: ' + new Date().toLocaleString();
+
+  // ── Machine info card ──
+  var detail = [
+    ['SCOPE',m.scope],['Manufacturer',m.manufacturer],['Model',m.model],
+    ['Serial No.',m.sn],['Range',m.range],['Operation Date',m.operation_date]
+  ];
+  var sbg = m.status==='Active'?'#dbeafe':'#f1f5f9';
+  var sco = m.status==='Active'?'#1e40af':'#475569';
+  var infoHtml =
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;">'+
+      '<div><h1 style="font-size:1.15rem;font-weight:700;color:#1e293b;margin:0 0 .2rem;">'+esc(m.machine_name)+'</h1>'+
+      '<p style="font-size:.875rem;color:#64748b;margin:0;">'+esc(m.machine_id)+' · '+esc(m.scope)+'</p></div>'+
+      '<span class="badge" style="background:'+sbg+';color:'+sco+';border:1px solid '+sbg+';">'+esc(m.status)+'</span>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:.65rem;">';
+  detail.forEach(function(f){
+    infoHtml += '<div style="background:#f8fafc;border-radius:.5rem;padding:.7rem;">'+
+      '<p style="font-size:.65rem;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;font-weight:600;margin:0 0 .15rem;">'+esc(f[0])+'</p>'+
+      '<p style="font-size:.875rem;font-weight:600;color:#374151;margin:0;">'+(esc(f[1])||'—')+'</p></div>';
+  });
+  infoHtml += '</div>';
+  $('machine-info-card').innerHTML = infoHtml;
+
+  // ── Profile action buttons ──
+  $('btn-log-for-machine').onclick    = function(){ showFormView(m.machine_id); };
+  $('btn-defect-for-machine').onclick = function(){ showDefectForm(m.machine_id); };
+
+  // ── Active Defects (Pending only) ──
+  var pending = (p.defects||[]).filter(function(d){ return d.status==='Pending'; });
+  var aCard   = $('active-defects-card');
+  var aTbody  = $('active-defects-tbody');
+  var aEmpty  = $('active-defects-empty');
+  var aBadge  = $('pending-count-badge');
+
+  aBadge.textContent = pending.length + ' pending';
+
+  if (pending.length === 0) {
+    aCard.className  = 'defect-alert-card no-defects';
+    aTbody.innerHTML = '';
+    aEmpty.style.display = 'block';
+    aBadge.style.cssText = 'background:#dcfce7;color:#166534;border:1px solid #86efac;';
+  } else {
+    aCard.className  = 'defect-alert-card';
+    aEmpty.style.display = 'none';
+    aBadge.style.cssText = 'background:#fef3c7;color:#92400e;border:1px solid #fbbf24;';
+    aTbody.innerHTML = pending.map(function(d){
+      return '<tr>'+
+        '<td style="font-weight:600;color:#92400e;white-space:nowrap;">'+esc(d.defect_id)+'</td>'+
+        '<td style="white-space:nowrap;">'+esc(d.date_found)+'</td>'+
+        '<td><span class="badge" style="'+severityStyle(d.severity)+'">'+esc(d.severity)+'</span></td>'+
+        '<td style="color:#374151;">'+esc(d.symptom)+'</td>'+
+        '<td style="color:#64748b;">'+esc(d.reported_by)+'</td>'+
+      '</tr>';
+    }).join('');
+  }
+
+  // ── Parts schedule ──
+  var sTb = $('schedule-tbody'), sEm = $('schedule-empty');
+  if (!p.schedule||!p.schedule.length){ sTb.innerHTML=''; sEm.style.display='block'; }
+  else {
+    sEm.style.display='none';
+    sTb.innerHTML = p.schedule.map(function(s){
+      var b = scheduleBadge(s.status, s.days_remaining);
+      return '<tr>'+
+        '<td style="font-weight:600;color:#1e293b;">'+esc(s.part_name)+'</td>'+
+        '<td style="color:#64748b;">'+esc(s.part_id)+'</td>'+
+        '<td>'+esc(s.last_changed||'—')+'</td>'+
+        '<td>'+esc(s.next_due_date||'—')+'</td>'+
+        '<td><span class="badge" style="'+b.s+'">'+b.l+'</span></td>'+
+      '</tr>';
+    }).join('');
+  }
+
+  // ── Maintenance log ──
+  var lTb = $('log-tbody'), lEm = $('log-empty');
+  if (!p.logs||!p.logs.length){ lTb.innerHTML=''; lEm.style.display='block'; }
+  else {
+    lEm.style.display='none';
+    lTb.innerHTML = p.logs.map(function(l){
+      return '<tr>'+
+        '<td style="font-weight:600;white-space:nowrap;">'+esc(l.maintenance_date||'—')+'</td>'+
+        '<td style="font-weight:500;color:#374151;">'+esc(l.action_type)+'</td>'+
+        '<td style="color:#64748b;">'+esc(l.part_name||l.part_id||'—')+'</td>'+
+        '<td style="color:#475569;max-width:180px;">'+esc(l.details||'—')+'</td>'+
+        '<td style="color:#475569;">'+esc(l.operator)+'</td>'+
+        '<td style="color:#94a3b8;font-size:.78rem;white-space:nowrap;">'+esc(l.timestamp)+'</td>'+
+      '</tr>';
+    }).join('');
+  }
+
+  // ── Full defect history ──
+  var dTb = $('defect-history-tbody'), dEm = $('defect-history-empty');
+  if (!p.defects||!p.defects.length){ dTb.innerHTML=''; dEm.style.display='block'; }
+  else {
+    dEm.style.display='none';
+    dTb.innerHTML = (p.defects||[]).map(function(d){
+      return '<tr>'+
+        '<td style="font-weight:600;white-space:nowrap;">'+esc(d.defect_id)+'</td>'+
+        '<td style="white-space:nowrap;">'+esc(d.date_found)+'</td>'+
+        '<td><span class="badge" style="'+severityStyle(d.severity)+'">'+esc(d.severity)+'</span></td>'+
+        '<td style="max-width:220px;color:#374151;">'+esc(d.symptom)+'</td>'+
+        '<td style="color:#64748b;">'+esc(d.reported_by)+'</td>'+
+        '<td><span class="badge" style="'+defectStatusStyle(d.status)+'">'+esc(d.status)+'</span></td>'+
+        '<td style="color:#94a3b8;font-size:.78rem;white-space:nowrap;">'+esc(d.timestamp)+'</td>'+
+      '</tr>';
+    }).join('');
+  }
+}
+
+// ──────────────────────────────────────────────
+// MAINTENANCE FORM
+// ──────────────────────────────────────────────
+function showFormView(prefillId) {
+  showView('form');
+  resetMaintForm();
+  $('f-date').value = todayISO();
+
+  if (S.dropdowns) {
+    fillMaintDropdowns(S.dropdowns);
+    if (prefillId) { $('f-machine').value = prefillId; }
+  } else {
+    call('getDropdownData', undefined, function(d){
+      S.dropdowns = d;
+      fillMaintDropdowns(d);
+      if (prefillId) { $('f-machine').value = prefillId; }
+    });
+  }
+}
+
+function fillMaintDropdowns(d) {
+  var ms = $('f-machine');
+  ms.innerHTML = '<option value="">— Select Machine —</option>';
+  (d.machines||[]).forEach(function(m){
+    var o = document.createElement('option');
+    o.value = m.machine_id; o.textContent = m.machine_id + ' — ' + m.machine_name;
+    ms.appendChild(o);
+  });
+
+  var ps = $('f-part');
+  ps.innerHTML = '<option value="">— None / Not Applicable —</option>';
+  (d.parts||[]).forEach(function(p){
+    var o = document.createElement('option');
+    o.value = p.part_id;
+    o.textContent = p.part_id + ' — ' + p.part_name + ' (' + p.lifetime_years + 'yr)';
+    o.dataset.lifetime = p.lifetime_years;
+    ps.appendChild(o);
+  });
+}
+
+// Called when Machine dropdown changes in maintenance form
+function onMachineChange() {
+  var action = $('f-action').value;
+  if (action === 'Repair') {
+    var machineId = $('f-machine').value;
+    if (machineId) { loadPendingDefects(machineId); }
+    else           { clearDefectDropdown(); }
+  }
+}
+
+// Called when Action Type changes in maintenance form
+function onActionChange() {
+  var action        = $('f-action').value;
+  var isRepair      = action === 'Repair';
+  var isReplacement = action === 'Part Replacement';
+
+  // Part label
+  $('part-req-label').style.display = isReplacement ? 'inline' : 'none';
+  $('part-opt-label').style.display = isReplacement ? 'none'   : 'inline';
+
+  // Defect link section — only for Repair
+  $('defect-link-section').style.display = isRepair ? 'block' : 'none';
+  if (isRepair) {
+    var machineId = $('f-machine').value;
+    if (machineId) { loadPendingDefects(machineId); }
+    else           { clearDefectDropdown(); }
+  }
+
+  // Hide part hint if part not selected
+  if (!$('f-part').value) $('part-hint').style.display = 'none';
+}
+
+function loadPendingDefects(machineId) {
+  var sel  = $('f-defect-id');
+  var hint = $('defect-load-hint');
+  sel.innerHTML = '<option value="">— Loading… —</option>';
+  sel.disabled  = true;
+  hint.style.display = 'block';
+
+  callQ('getPendingDefects', machineId, function(defects){
+    hint.style.display = 'none';
+    sel.disabled       = false;
+    if (!defects || defects.length === 0) {
+      sel.innerHTML = '<option value="">— No pending defects for this machine —</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">— None / Not Applicable —</option>';
+    defects.forEach(function(d){
+      var o = document.createElement('option');
+      o.value = d.defect_id;
+      o.textContent = d.defect_id + ' · ' + d.severity + ' · ' + truncate(d.symptom, 45) + ' (' + d.date_found + ')';
+      sel.appendChild(o);
+    });
+  }, function(){
+    hint.style.display = 'none';
+    sel.disabled       = false;
+    sel.innerHTML      = '<option value="">— Could not load defects —</option>';
+  });
+}
+
+function clearDefectDropdown() {
+  var sel = $('f-defect-id');
+  sel.innerHTML = '<option value="">— Select a machine first —</option>';
+  sel.disabled  = false;
+}
+
+function onPartChange() {
+  var ps   = $('f-part');
+  var hint = $('part-hint');
+  var opt  = ps.options[ps.selectedIndex];
+  if (ps.value && opt && opt.dataset.lifetime) {
+    var d = $('f-date').value || todayISO();
+    hint.textContent = 'Lifetime: ' + opt.dataset.lifetime + ' yr — Next Due Date calculated from Maintenance Date (' + d + ').';
+    hint.style.display = 'block';
+  } else { hint.style.display = 'none'; }
+}
+
+function resetMaintForm() {
+  $('entry-form').reset();
+  $('maint-error').style.display    = 'none';
+  $('part-hint').style.display      = 'none';
+  $('part-req-label').style.display = 'none';
+  $('part-opt-label').style.display = 'inline';
+  $('defect-link-section').style.display = 'none';
+  $('defect-load-hint').style.display    = 'none';
+  var btn = $('maint-submit');
+  btn.disabled = false; btn.textContent = 'Save Entry';
+}
+
+function submitMaintForm(e) {
+  e.preventDefault();
+  var machineId  = $('f-machine').value.trim();
+  var maintDate  = $('f-date').value.trim();
+  var actionType = $('f-action').value;
+  var defectId   = $('f-defect-id') ? $('f-defect-id').value.trim() : '';
+  var partId     = $('f-part').value.trim();
+  var details    = $('f-details').value.trim();
+  var operator   = $('f-operator').value.trim();
+  var errEl      = $('maint-error');
+
+  var err = '';
+  if (!machineId)  err = 'Please select a machine.';
+  else if (!maintDate)  err = 'Please enter the Maintenance Date.';
+  else if (!actionType) err = 'Please select an Action Type.';
+  else if (actionType==='Part Replacement' && !partId) err = 'Part ID is required for Part Replacement.';
+  else if (!operator)   err = 'Please enter the Operator name.';
+
+  if (err){ errEl.textContent=err; errEl.style.display='block'; return; }
+  errEl.style.display = 'none';
+
+  var btn = $('maint-submit');
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  call('submitMaintenanceLog',
+    { machine_id:machineId, maintenance_date:maintDate, action_type:actionType,
+      defect_id:defectId, part_id:partId, details:details, operator:operator },
+    function(res){
+      if (res && res.success===false){
+        errEl.textContent = res.error||'Submission failed.';
+        errEl.style.display='block';
+        btn.disabled=false; btn.textContent='Save Entry'; return;
+      }
+      var msg = 'Entry saved!';
+      if (defectId) msg += ' Defect ' + defectId + ' marked Resolved.';
+      toast(msg, 'success');
+      S.machines = []; S.dropdowns = null;
+      showDashboard();
+    },
+    function(){ btn.disabled=false; btn.textContent='Save Entry'; }
+  );
+}
+
+// ──────────────────────────────────────────────
+// DEFECT REPORT FORM
+// ──────────────────────────────────────────────
+function showDefectForm(prefillId) {
+  showView('defect-form');
+  resetDefectForm();
+  $('df-date').value = todayISO();
+
+  if (S.dropdowns) {
+    fillDefectDropdowns(S.dropdowns);
+    if (prefillId) $('df-machine').value = prefillId;
+  } else {
+    call('getDropdownData', undefined, function(d){
+      S.dropdowns = d;
+      fillDefectDropdowns(d);
+      if (prefillId) $('df-machine').value = prefillId;
+    });
+  }
+}
+
+function fillDefectDropdowns(d) {
+  var ms = $('df-machine');
+  ms.innerHTML = '<option value="">— Select Machine —</option>';
+  (d.machines||[]).forEach(function(m){
+    var o = document.createElement('option');
+    o.value = m.machine_id; o.textContent = m.machine_id + ' — ' + m.machine_name;
+    ms.appendChild(o);
+  });
+}
+
+function onSeverityChange() {
+  var sev   = $('df-severity').value;
+  var hint  = $('severity-hint');
+  var msgs  = {
+    'Low':      { t:'Minor issue — machine is still fully operational. Monitor at next scheduled inspection.', s:'background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;' },
+    'Medium':   { t:'Degraded performance detected. Schedule inspection or repair within the next maintenance cycle.', s:'background:#fef3c7;color:#92400e;border:1px solid #fcd34d;' },
+    'High':     { t:'Significant risk to machine or product quality. Schedule a repair as soon as possible.', s:'background:#fed7aa;color:#9a3412;border:1px solid #fb923c;' },
+    'Critical': { t:'⛔ Machine should be stopped immediately. Do not operate until repaired.', s:'background:#fee2e2;color:#991b1b;border:1px solid #f87171;' }
+  };
+  if (sev && msgs[sev]) {
+    hint.textContent = msgs[sev].t;
+    hint.style.cssText = msgs[sev].s + 'display:block;font-size:.73rem;padding:.35rem .6rem;border-radius:.35rem;';
+  } else { hint.style.display = 'none'; }
+}
+
+function resetDefectForm() {
+  $('defect-form').reset();
+  $('defect-error').style.display  = 'none';
+  $('severity-hint').style.display = 'none';
+  var btn = $('defect-submit');
+  btn.disabled = false; btn.textContent = 'Submit Defect Report';
+}
+
+function submitDefectForm(e) {
+  e.preventDefault();
+  var machineId  = $('df-machine').value.trim();
+  var dateFound  = $('df-date').value.trim();
+  var symptom    = $('df-symptom').value.trim();
+  var severity   = $('df-severity').value;
+  var reportedBy = $('df-reporter').value.trim();
+  var errEl      = $('defect-error');
+
+  var err = '';
+  if (!machineId)  err = 'Please select a machine.';
+  else if (!dateFound)  err = 'Please enter the Date Found.';
+  else if (!symptom)    err = 'Please describe the symptom.';
+  else if (!severity)   err = 'Please select a Severity Level.';
+  else if (!reportedBy) err = 'Please enter your name.';
+
+  if (err){ errEl.textContent=err; errEl.style.display='block'; return; }
+  errEl.style.display='none';
+
+  var btn = $('defect-submit');
+  btn.disabled = true; btn.textContent = 'Submitting…';
+
+  call('reportDefect',
+    { machine_id:machineId, date_found:dateFound, symptom:symptom,
+      severity:severity, reported_by:reportedBy },
+    function(res){
+      if (res && res.success===false){
+        errEl.textContent = res.error||'Submission failed.';
+        errEl.style.display='block';
+        btn.disabled=false; btn.textContent='Submit Defect Report'; return;
+      }
+      toast('Defect ' + (res.defect_id||'') + ' reported successfully!', 'warn');
+      S.machines = []; S.dropdowns = null;
+      showDashboard();
+    },
+    function(){ btn.disabled=false; btn.textContent='Submit Defect Report'; }
+  );
+}
+
+// ──────────────────────────────────────────────
+// DATE CHANGE → UPDATE PART HINT
+// ──────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function(){
+  $('f-date').addEventListener('change', function(){ if ($('f-part').value) onPartChange(); });
+  $('f-machine').addEventListener('change', onMachineChange);
+});
+
+// ──────────────────────────────────────────────
+// INIT
+// ──────────────────────────────────────────────
+showDashboard();
+</script>
+</body>
+</html>
