@@ -1,0 +1,18 @@
+Option Explicit
+
+Private Sub UserForm_Initialize()
+    cboMachine.List = GetMachinesArray(False)
+End Sub
+
+Private Sub cmdOpen_Click()
+    On Error GoTo OpenFailed
+    RenderMachineProfile ExtractIDFromCombo(cboMachine.Value)
+    Unload Me
+    Exit Sub
+OpenFailed:
+    MsgBox Err.Description, vbExclamation
+End Sub
+
+Private Sub cmdCancel_Click()
+    Unload Me
+End Sub

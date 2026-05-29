@@ -1,0 +1,63 @@
+Option Explicit
+
+Private Sub UserForm_Initialize()
+    cboMachine.List = GetMachinesArray(False)
+    cboActionType.List = Array(ACTION_REPAIR, ACTION_PART_REPLACEMENT, ACTION_PM)
+    cboPart.List = GetPartsArray(True)
+    txtMaintenanceDate.Value = Format$(Date, "yyyy-mm-dd")
+    txtOperator.Value = CurrentUserName
+    UpdateRepairControls
+End Sub
+
+Private Sub cboMachine_Change()
+    LoadPendingDefects
+End Sub
+
+Private Sub cboActionType_Change()
+    UpdateRepairControls
+    LoadPendingDefects
+End Sub
+
+Private Sub UpdateRepairControls()
+    Dim isRepair As Boolean
+    isRepair = (StrComp(TrimText(cboActionType.Value), ACTION_REPAIR, vbTextCompare) = 0)
+    cboPendingDefect.Visible = isRepair
+    txtRootCause.Visible = isRepair
+    txtCorrectiveAction.Visible = isRepair
+    If Not isRepair Then
+        cboPendingDefect.Value = ""
+        txtRootCause.Value = ""
+        txtCorrectiveAction.Value = ""
+    End If
+End Sub
+
+Private Sub LoadPendingDefects()
+    Dim machineId As String
+    machineId = ExtractIDFromCombo(cboMachine.Value)
+    cboPendingDefect.Clear
+    If Len(machineId) > 0 Then cboPendingDefect.List = GetPendingDefectsArray(machineId, True)
+End Sub
+
+Private Sub cmdSave_Click()
+    Dim maintenanceId As String
+    On Error GoTo SaveFailed
+    maintenanceId = CreateMaintenanceEntry( _
+        ExtractIDFromCombo(cboMachine.Value), _
+        txtMaintenanceDate.Value, _
+        cboActionType.Value, _
+        ExtractIDFromCombo(cboPart.Value), _
+        txtDetails.Value, _
+        txtOperator.Value, _
+        ExtractIDFromCombo(cboPendingDefect.Value), _
+        txtRootCause.Value, _
+        txtCorrectiveAction.Value)
+    MsgBox "Maintenance entry saved: " & maintenanceId, vbInformation
+    Unload Me
+    Exit Sub
+SaveFailed:
+    MsgBox Err.Description, vbExclamation
+End Sub
+
+Private Sub cmdCancel_Click()
+    Unload Me
+End Sub
