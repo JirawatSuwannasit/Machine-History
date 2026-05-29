@@ -1,0 +1,28 @@
+Option Explicit
+
+Private Sub UserForm_Initialize()
+    cboMachine.List = GetMachinesArray(False)
+    cboSeverity.List = Array(SEVERITY_LOW, SEVERITY_MEDIUM, SEVERITY_HIGH, SEVERITY_CRITICAL)
+    txtDateFound.Value = Format$(Date, "yyyy-mm-dd")
+    txtReportedBy.Value = CurrentUserName
+End Sub
+
+Private Sub cmdSubmit_Click()
+    Dim defectId As String
+    On Error GoTo SubmitFailed
+    defectId = CreateDefectReport( _
+        ExtractIDFromCombo(cboMachine.Value), _
+        txtDateFound.Value, _
+        txtSymptom.Value, _
+        cboSeverity.Value, _
+        txtReportedBy.Value)
+    MsgBox "Defect reported: " & defectId, vbInformation
+    Unload Me
+    Exit Sub
+SubmitFailed:
+    MsgBox Err.Description, vbExclamation
+End Sub
+
+Private Sub cmdCancel_Click()
+    Unload Me
+End Sub
